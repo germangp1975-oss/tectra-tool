@@ -1,9 +1,10 @@
 import meshio
 import numpy as np
 
-def analyze_file(file_path, yield_limit=None):
+def analyze_file(file, yield_limit=None):
     try:
-        mesh = meshio.read(file_path)
+        # Leer directamente el archivo subido (buffer de Streamlit)
+        mesh = meshio.read(file)
     except Exception as e:
         return f"Error leyendo archivo: {str(e)}"
 
@@ -17,86 +18,95 @@ def analyze_file(file_path, yield_limit=None):
     output.append(f"Número de nodos: {len(points)}")
 
     # -----------------------------
-    # CAMPOS DISPONIBLES
+    # DATOS DISPONIBLES
     # -----------------------------
-    fields = mesh.point_data.keys()
+    if not mesh.point_data:
+        output.append("\n⚠️ No hay datos asociados a los nodos")
+        return "\n".join(output)
+
     output.append("\nCampos disponibles:")
-    for f in fields:
-        output.append(f" - {f}")
+    for key in mesh.point_data.keys():
+        output.append(f" - {key}")
 
     # -----------------------------
-    # DETECCIÓN AUTOMÁTICA DE STRESS
+    # DETECTAR CAMPO DE TENSIONES
     # -----------------------------
-    stress_field = None
+    stress = None
+    stress_key = None
 
-    for key in fields:
-        if "stress" in key.lower() or "tresca" in key.lower():
-            stress_field = key
+    for key in mesh.point_data.keys():
+        key_lower = key.lower()
+
+        if (
+            "stress" in key_lower or
+            "tresca" in key_lower or
+            "von" in key_lower
+        ):
+            stress = mesh.point_data[key]
+            stress_key = key
             break
 
-    if stress_field is None:
-        return "No se encontró campo de tensiones en el archivo."
+    if stress is None:
+        output.append("\n⚠️ No se encontró campo de tensiones")
+        return "\n".join(output)
 
-    stress = mesh.point_data[stress_field]
+    output.append(f"\nCampo de tensiones detectado: {stress_key}")
 
-    # Asegurar array 1D
+    stress = np.array(stress)
+
+    # Si es tensorial → reducir a magnitud
     if len(stress.shape) > 1:
         stress = np.linalg.norm(stress, axis=1)
 
     # -----------------------------
-    # MÉTRICAS
+    # MÉTRICAS PRINCIPALES
     # -----------------------------
     max_stress = np.max(stress)
     mean_stress = np.mean(stress)
-    std_stress = np.std(stress)
+    min_stress = np.min(stress)
 
-    output.append("\n=== MÉTRICAS ===")
-    output.append(f"Max stress: {round(max_stress, 2)}")
+    output.append(f"\nMax stress: {round(max_stress, 2)}")
     output.append(f"Mean stress: {round(mean_stress, 2)}")
-    output.append(f"Std stress: {round(std_stress, 2)}")
+    output.append(f"Min stress: {round(min_stress, 2)}")
 
     # -----------------------------
-    # DETECCIÓN DE ZONAS CRÍTICAS
+    # PUNTOS CRÍTICOS
     # -----------------------------
     threshold = np.percentile(stress, 95)
-    critical = stress >= threshold
-    num_critical = np.sum(critical)
+    critical_mask = stress >= threshold
+    num_critical = np.sum(critical_mask)
 
-    output.append(f"\nPuntos críticos (top 5%): {num_critical}")
+    output.append(f"\nPuntos críticos (top 5%): {int(num_critical)}")
 
     # -----------------------------
-    # GRADIENTE APROX
+    # GRADIENTE DE TENSIONES (simple)
     # -----------------------------
     gradients = []
 
     for i in range(len(points) - 1):
-        dist = np.linalg.norm(points[i] - points[i + 1])
+        dist = np.linalg.norm(points[i] - points[i+1])
         if dist > 0:
-            gradients.append(abs(stress[i] - stress[i + 1]) / dist)
+            grad = abs(stress[i] - stress[i+1]) / dist
+            gradients.append(grad)
 
     max_gradient = max(gradients) if gradients else 0
     output.append(f"Max gradient: {round(max_gradient, 2)}")
 
     # -----------------------------
-    # ENGINE DE DECISIÓN
+    # DIAGNÓSTICO
     # -----------------------------
-    output.append("\n=== DIAGNÓSTICO ===")
+    output.append("\n=== RESULTADO ===")
 
     if max_stress > mean_stress * 3:
-        output.append("⚠️ Alta concentración de tensiones")
+        output.append("⚠️ Concentración de tensiones detectada")
 
-    if yield_limit:
+    if max_gradient > mean_stress:
+        output.append("⚠️ Alto gradiente de tensiones (posible discontinuidad)")
+
+    if yield_limit is not None:
         if max_stress > yield_limit:
-            output.append("❌ Supera límite elástico")
+            output.append("🚨 Supera límite elástico")
         else:
-            output.append("✔ Dentro de límite elástico")
-
-    if max_gradient > 100:
-        output.append("⚠️ Cambio brusco de tensiones (posible entalla)")
-
-    if num_critical < len(stress) * 0.02:
-        output.append("⚠️ Concentración localizada (punto crítico)")
-    else:
-        output.append("✔ Distribución más uniforme")
+            output.append("✔ Dentro del límite elástico")
 
     return "\n".join(output)
