@@ -3,22 +3,17 @@ import numpy as np
 
 def analyze_file(file, yield_limit=None):
     try:
-        mesh = meshio.read(file)
+        # 🔴 CLAVE: especificar formato VTU
+        mesh = meshio.read(file, file_format="vtu")
     except Exception as e:
         return f"File reading error: {str(e)}"
 
     output = []
     output.append("=== TECTRA FEM TOOL V8 — Structural Decision Engine ===\n")
 
-    # -----------------------------
-    # NODES
-    # -----------------------------
     points = mesh.points
     output.append(f"Number of nodes: {len(points)}")
 
-    # -----------------------------
-    # AVAILABLE DATA FIELDS
-    # -----------------------------
     if not mesh.point_data:
         output.append("\n⚠️ No nodal data fields available")
         return "\n".join(output)
@@ -27,20 +22,12 @@ def analyze_file(file, yield_limit=None):
     for key in mesh.point_data.keys():
         output.append(f" - {key}")
 
-    # -----------------------------
-    # STRESS FIELD DETECTION
-    # -----------------------------
     stress = None
     stress_key = None
 
     for key in mesh.point_data.keys():
         key_lower = key.lower()
-
-        if (
-            "stress" in key_lower or
-            "tresca" in key_lower or
-            "von" in key_lower
-        ):
+        if "stress" in key_lower or "tresca" in key_lower or "von" in key_lower:
             stress = mesh.point_data[key]
             stress_key = key
             break
@@ -53,13 +40,9 @@ def analyze_file(file, yield_limit=None):
 
     stress = np.array(stress)
 
-    # Convert tensor to scalar magnitude if needed
     if len(stress.shape) > 1:
         stress = np.linalg.norm(stress, axis=1)
 
-    # -----------------------------
-    # CORE METRICS
-    # -----------------------------
     max_stress = np.max(stress)
     mean_stress = np.mean(stress)
     min_stress = np.min(stress)
@@ -68,32 +51,21 @@ def analyze_file(file, yield_limit=None):
     output.append(f"Mean stress: {round(mean_stress, 2)} MPa")
     output.append(f"Minimum stress: {round(min_stress, 2)} MPa")
 
-    # -----------------------------
-    # CRITICAL REGION DETECTION
-    # -----------------------------
     threshold = np.percentile(stress, 95)
     critical_mask = stress >= threshold
     num_critical = np.sum(critical_mask)
 
     output.append(f"\nCritical points (top 5% stress): {int(num_critical)}")
 
-    # -----------------------------
-    # STRESS GRADIENT (SIMPLE ESTIMATION)
-    # -----------------------------
     gradients = []
-
     for i in range(len(points) - 1):
-        distance = np.linalg.norm(points[i] - points[i + 1])
-        if distance > 0:
-            gradient = abs(stress[i] - stress[i + 1]) / distance
-            gradients.append(gradient)
+        dist = np.linalg.norm(points[i] - points[i+1])
+        if dist > 0:
+            gradients.append(abs(stress[i] - stress[i+1]) / dist)
 
     max_gradient = max(gradients) if gradients else 0
     output.append(f"Maximum stress gradient: {round(max_gradient, 2)}")
 
-    # -----------------------------
-    # ENGINEERING DIAGNOSIS
-    # -----------------------------
     output.append("\n=== ENGINEERING ASSESSMENT ===")
 
     if max_stress > mean_stress * 3:
