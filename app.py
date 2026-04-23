@@ -1,166 +1,85 @@
 import streamlit as st
-import subprocess
 import tempfile
-import os
+from fem_toolV8 import analyze_file
 
-st.set_page_config(page_title="FEM Tool PRO", layout="centered")
+st.set_page_config(page_title="TECTRA™ Tool", layout="centered")
 
-st.title("FEM Tool — Structural Insight Engine")
-st.markdown("Upload one or more FEM result files (.vtu) for comparative diagnosis")
+# -------------------------------
+# CONTROL DE USO
+# -------------------------------
+if "used" not in st.session_state:
+    st.session_state.used = False
 
+if "unlocked" not in st.session_state:
+    st.session_state.unlocked = False
+
+# -------------------------------
+# HEADER
+# -------------------------------
+st.title("TECTRA™ — Structural Decision Tool")
+st.markdown("Fast structural decision engine based on FEM results")
+st.markdown("Not a simulation tool. A decision tool.")
+
+st.markdown("---")
+
+# -------------------------------
+# BLOQUEO / ACCESO
+# -------------------------------
+if not st.session_state.unlocked:
+
+    if st.session_state.used:
+        st.error("Free trial already used")
+
+        st.markdown("### 🔒 Unlock full access")
+        st.markdown(
+            "[👉 Pay here to unlock](https://www.tectra-tech.com/_paylink/AZ263VkL)"
+        )
+
+        code = st.text_input("Enter access code")
+
+        if code == "TECTRA2026":
+            st.session_state.unlocked = True
+            st.success("Access granted")
+        else:
+            st.stop()
+
+    else:
+        st.info("You have 1 free analysis available")
+
+# -------------------------------
+# UI
+# -------------------------------
 uploaded_files = st.file_uploader(
-    "Select .vtu files",
+    "Upload .vtu files",
     type=["vtu"],
     accept_multiple_files=True
 )
 
-yield_strength = st.text_input("Yield strength (MPa) [optional]", "250")
+yield_strength = st.number_input(
+    "Yield strength (MPa) [optional]",
+    value=250
+)
 
+run = st.button("Run Analysis")
 
-# -----------------------------
-# OUTPUT PARSING
-# -----------------------------
-def parse_output(output):
+# -------------------------------
+# EJECUCIÓN
+# -------------------------------
+if run and uploaded_files:
+    st.session_state.used = True
 
-    structure_type = ""
-    geometric_risk = ""
-    decision = ""
+    results = []
 
-    for line in output.splitlines():
+    for file in uploaded_files:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(file.read())
+            tmp_path = tmp.name
 
-        if "Type:" in line:
-            structure_type = line.split("Type:")[1].strip()
+        result = analyze_file(tmp_path, yield_strength)
+        results.append((file.name, result))
 
-        if "Geometric risk:" in line:
-            geometric_risk = line.split(":")[1].strip()
+    st.markdown("## Results")
 
-        if "Result:" in line:
-            decision = line.split(":")[1].strip()
-
-    return structure_type, geometric_risk, decision
-
-
-# -----------------------------
-# SCORING
-# -----------------------------
-def compute_score(structure_type, geometric_risk, decision):
-
-    score = 100
-
-    if decision == "NOT ACCEPTABLE":
-        return 10
-
-    if decision == "REVIEW":
-        score -= 25
-
-    if "NOTCH" in structure_type:
-        score -= 25
-    elif "TRANSITION" in structure_type:
-        score -= 15
-
-    if geometric_risk == "HIGH":
-        score -= 25
-    elif geometric_risk == "MEDIUM":
-        score -= 10
-
-    return max(10, score)
-
-
-# -----------------------------
-# INDIVIDUAL RESULT DISPLAY
-# -----------------------------
-def show_result(name, structure_type, geometric_risk, decision):
-
-    score = compute_score(structure_type, geometric_risk, decision)
-
-    st.markdown(f"### {name}")
-
-    if decision == "ACCEPTABLE":
-        st.success("🟢 DESIGN ACCEPTABLE")
-    elif decision == "REVIEW":
-        st.warning("🟡 GEOMETRY REVIEW REQUIRED")
-    else:
-        st.error("🔴 NOT ACCEPTABLE")
-
-    st.progress(score / 100)
-    st.write(f"Score: {score}/100")
-
-    st.write(f"Type: {structure_type}")
-    st.write(f"Risk: {geometric_risk}")
-    st.write(f"Decision: {decision}")
-
-    return score
-
-
-# -----------------------------
-# PROCESS
-# -----------------------------
-if uploaded_files:
-
-    st.success(f"{len(uploaded_files)} files uploaded")
-
-    if st.button("Run Analysis"):
-
-        results = []
-
-        for file in uploaded_files:
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".vtu") as tmp:
-                tmp.write(file.read())
-                temp_path = tmp.name
-
-            input_data = temp_path + "\n" + yield_strength + "\n"
-
-            result = subprocess.run(
-                ["python", os.path.join(os.getcwd(), "fem_toolV8.py")],
-                input=input_data,
-                text=True,
-                capture_output=True
-            )
-
-            if result.stdout:
-
-                structure_type, geometric_risk, decision = parse_output(result.stdout)
-                score = compute_score(structure_type, geometric_risk, decision)
-
-                results.append({
-                    "name": file.name,
-                    "type": structure_type,
-                    "risk": geometric_risk,
-                    "decision": decision,
-                    "score": score,
-                    "raw": result.stdout
-                })
-
-            try:
-                os.remove(temp_path)
-            except:
-                pass
-
-        # -----------------------------
-        # SORT BY SCORE
-        # -----------------------------
-        results = sorted(results, key=lambda x: x["score"], reverse=True)
-
-        st.markdown("## Design Ranking")
-
-        for i, r in enumerate(results, start=1):
-
-            st.markdown(f"### #{i} — {r['name']}")
-
-            if r["decision"] == "ACCEPTABLE":
-                st.success("🟢 DESIGN ACCEPTABLE")
-            elif r["decision"] == "REVIEW":
-                st.warning("🟡 GEOMETRY REVIEW REQUIRED")
-            else:
-                st.error("🔴 NOT ACCEPTABLE")
-
-            st.progress(r["score"] / 100)
-            st.write(f"Score: {r['score']}/100")
-
-            st.write(f"Type: {r['type']}")
-            st.write(f"Risk: {r['risk']}")
-            st.write(f"Decision: {r['decision']}")
-
-            with st.expander("Full diagnostic output"):
-                st.code(r["raw"])
+    for name, res in results:
+        st.markdown(f"### {name}")
+        st.text(res)
