@@ -1,9 +1,12 @@
 import streamlit as st
 from fem_toolV8 import analyze_file
 
-st.set_page_config(page_title="TECTRA™ FEM Tool", layout="centered")
+st.set_page_config(page_title="TECTRA FEM Tool", layout="centered")
 
-st.title("TECTRA™ — Structural Insight Engine")
+st.markdown(
+    "<h2>TECTRA™ — Structural Insight Engine</h2>",
+    unsafe_allow_html=True
+)
 
 st.markdown("Sube un archivo FEM (.vtu) para análisis automático")
 
