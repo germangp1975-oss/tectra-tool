@@ -1,28 +1,25 @@
 import streamlit as st
 from fem_toolV8 import analyze_file
 
-st.set_page_config(page_title="TECTRA FEM Tool", layout="centered")
+st.set_page_config(page_title="TECTRA Structural Insight Engine", layout="centered")
 
 st.markdown(
     "<h2>TECTRA™ — Structural Insight Engine</h2>",
     unsafe_allow_html=True
 )
 
-st.markdown("Sube un archivo FEM (.vtu) para análisis automático")
+st.markdown("Upload a FEM (.vtu) file for automated structural analysis")
 
-uploaded_file = st.file_uploader("Selecciona archivo .vtu", type=["vtu"])
+uploaded_file = st.file_uploader("Select .vtu file", type=["vtu"])
 
-yield_limit = st.number_input("Límite elástico (MPa) [opcional]", value=250)
+yield_limit = st.number_input("Yield strength (MPa) [optional]", value=250)
 
 if uploaded_file is not None:
-    st.success("Archivo cargado correctamente")
+    st.success("File successfully loaded")
 
-    with open("temp.vtu", "wb") as f:
-        f.write(uploaded_file.read())
+    if st.button("Run Analysis"):
+        with st.spinner("Processing FEM data..."):
+            result = analyze_file(uploaded_file, yield_limit)
 
-    if st.button("Analizar"):
-        with st.spinner("Analizando..."):
-            result = analyze_file("temp.vtu", yield_limit)
-
-        st.markdown("## Resultado del análisis")
+        st.markdown("## Analysis Results")
         st.text(result)
