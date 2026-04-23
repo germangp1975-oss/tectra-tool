@@ -3,33 +3,32 @@ import numpy as np
 
 def analyze_file(file, yield_limit=None):
     try:
-        # Leer directamente el archivo subido (buffer de Streamlit)
         mesh = meshio.read(file)
     except Exception as e:
-        return f"Error leyendo archivo: {str(e)}"
+        return f"File reading error: {str(e)}"
 
     output = []
-    output.append("=== FEM TOOL V8 — Engineering Decision Engine ===\n")
+    output.append("=== TECTRA FEM TOOL V8 — Structural Decision Engine ===\n")
 
     # -----------------------------
-    # NODOS
+    # NODES
     # -----------------------------
     points = mesh.points
-    output.append(f"Número de nodos: {len(points)}")
+    output.append(f"Number of nodes: {len(points)}")
 
     # -----------------------------
-    # DATOS DISPONIBLES
+    # AVAILABLE DATA FIELDS
     # -----------------------------
     if not mesh.point_data:
-        output.append("\n⚠️ No hay datos asociados a los nodos")
+        output.append("\n⚠️ No nodal data fields available")
         return "\n".join(output)
 
-    output.append("\nCampos disponibles:")
+    output.append("\nAvailable data fields:")
     for key in mesh.point_data.keys():
         output.append(f" - {key}")
 
     # -----------------------------
-    # DETECTAR CAMPO DE TENSIONES
+    # STRESS FIELD DETECTION
     # -----------------------------
     stress = None
     stress_key = None
@@ -47,66 +46,66 @@ def analyze_file(file, yield_limit=None):
             break
 
     if stress is None:
-        output.append("\n⚠️ No se encontró campo de tensiones")
+        output.append("\n⚠️ No stress field detected")
         return "\n".join(output)
 
-    output.append(f"\nCampo de tensiones detectado: {stress_key}")
+    output.append(f"\nDetected stress field: {stress_key}")
 
     stress = np.array(stress)
 
-    # Si es tensorial → reducir a magnitud
+    # Convert tensor to scalar magnitude if needed
     if len(stress.shape) > 1:
         stress = np.linalg.norm(stress, axis=1)
 
     # -----------------------------
-    # MÉTRICAS PRINCIPALES
+    # CORE METRICS
     # -----------------------------
     max_stress = np.max(stress)
     mean_stress = np.mean(stress)
     min_stress = np.min(stress)
 
-    output.append(f"\nMax stress: {round(max_stress, 2)}")
-    output.append(f"Mean stress: {round(mean_stress, 2)}")
-    output.append(f"Min stress: {round(min_stress, 2)}")
+    output.append(f"\nMaximum stress: {round(max_stress, 2)} MPa")
+    output.append(f"Mean stress: {round(mean_stress, 2)} MPa")
+    output.append(f"Minimum stress: {round(min_stress, 2)} MPa")
 
     # -----------------------------
-    # PUNTOS CRÍTICOS
+    # CRITICAL REGION DETECTION
     # -----------------------------
     threshold = np.percentile(stress, 95)
     critical_mask = stress >= threshold
     num_critical = np.sum(critical_mask)
 
-    output.append(f"\nPuntos críticos (top 5%): {int(num_critical)}")
+    output.append(f"\nCritical points (top 5% stress): {int(num_critical)}")
 
     # -----------------------------
-    # GRADIENTE DE TENSIONES (simple)
+    # STRESS GRADIENT (SIMPLE ESTIMATION)
     # -----------------------------
     gradients = []
 
     for i in range(len(points) - 1):
-        dist = np.linalg.norm(points[i] - points[i+1])
-        if dist > 0:
-            grad = abs(stress[i] - stress[i+1]) / dist
-            gradients.append(grad)
+        distance = np.linalg.norm(points[i] - points[i + 1])
+        if distance > 0:
+            gradient = abs(stress[i] - stress[i + 1]) / distance
+            gradients.append(gradient)
 
     max_gradient = max(gradients) if gradients else 0
-    output.append(f"Max gradient: {round(max_gradient, 2)}")
+    output.append(f"Maximum stress gradient: {round(max_gradient, 2)}")
 
     # -----------------------------
-    # DIAGNÓSTICO
+    # ENGINEERING DIAGNOSIS
     # -----------------------------
-    output.append("\n=== RESULTADO ===")
+    output.append("\n=== ENGINEERING ASSESSMENT ===")
 
     if max_stress > mean_stress * 3:
-        output.append("⚠️ Concentración de tensiones detectada")
+        output.append("⚠️ High stress concentration detected")
 
     if max_gradient > mean_stress:
-        output.append("⚠️ Alto gradiente de tensiones (posible discontinuidad)")
+        output.append("⚠️ Significant stress gradient — possible geometric discontinuity")
 
     if yield_limit is not None:
         if max_stress > yield_limit:
-            output.append("🚨 Supera límite elástico")
+            output.append("🚨 Yield strength exceeded — potential failure risk")
         else:
-            output.append("✔ Dentro del límite elástico")
+            output.append("✔ Stress levels within elastic limit")
 
     return "\n".join(output)
