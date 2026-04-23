@@ -4,77 +4,73 @@ import numpy as np
 def analyze_file(file_path, yield_limit=None):
 
     try:
-        try:
-            # intento estándar
-            mesh = meshio.read(file_path)
-
-        except Exception:
-            # fallback forzando formato VTU
-            mesh = meshio.read(file_path, file_format="vtu")
-
+        mesh = meshio.read(file_path)
     except Exception as e:
         return f"File reading error: {str(e)}"
 
-    output = []
-    output.append("=== TECTRA FEM TOOL V8 — Engineering Decision Engine ===\n")
+    result = []
+    result.append("=== TECTRA FEM TOOL V8 — Engineering Decision Engine ===\n")
 
-    # NODES
-    try:
-        points = mesh.points
-        output.append(f"Number of nodes: {len(points)}")
-    except:
-        output.append("No node data found")
-        return "\n".join(output)
+    points = mesh.points
+    n_nodes = len(points)
 
-    # STRESS DETECTION
-    stress = None
+    result.append(f"Number of nodes: {n_nodes}")
 
-    for key in mesh.point_data.keys():
-        if "stress" in key.lower() or "von" in key.lower():
-            stress = mesh.point_data[key]
+    if not mesh.point_data:
+        result.append("No point data found in file.")
+        return "\n".join(result)
+
+    available_fields = list(mesh.point_data.keys())
+
+    result.append("\nAvailable fields:")
+    for f in available_fields:
+        result.append(f" - {f}")
+
+    # Try common stress field names
+    stress_field = None
+    for key in available_fields:
+        if "stress" in key.lower():
+            stress_field = key
             break
 
-    if stress is None:
-        return "No stress field found in file"
+    if stress_field is None:
+        result.append("\nNo stress field detected.")
+        return "\n".join(result)
 
-    # if tensor → convert to magnitude
-    if len(stress.shape) > 1:
+    stress = mesh.point_data[stress_field]
+
+    if stress.ndim > 1:
         stress = np.linalg.norm(stress, axis=1)
 
-    max_stress = float(np.max(stress))
-    mean_stress = float(np.mean(stress))
+    max_stress = np.max(stress)
+    mean_stress = np.mean(stress)
 
-    output.append(f"Max stress: {max_stress:.2f}")
-    output.append(f"Mean stress: {mean_stress:.2f}")
+    result.append(f"\nMax stress: {max_stress:.2f}")
+    result.append(f"Mean stress: {mean_stress:.2f}")
 
-    # CRITICAL ZONE
     threshold = np.percentile(stress, 95)
     critical_points = np.sum(stress >= threshold)
 
-    output.append(f"Critical points (top 5%): {critical_points}")
+    result.append(f"Critical points (top 5%): {critical_points}")
 
-    # GRADIENT
-    coords = points
+    # Gradient estimation
     gradients = []
 
-    for i in range(len(coords) - 1):
-        dist = np.linalg.norm(coords[i] - coords[i+1])
+    for i in range(len(points) - 1):
+        dist = np.linalg.norm(points[i] - points[i+1])
         if dist > 0:
             gradients.append(abs(stress[i] - stress[i+1]) / dist)
 
     max_gradient = max(gradients) if gradients else 0
-    output.append(f"Max stress gradient: {max_gradient:.2f}")
+    result.append(f"Max stress gradient: {max_gradient:.2f}")
 
-    # ENGINEERING DECISION
-    output.append("\n=== ENGINEERING DECISION ===")
+    result.append("\n=== ENGINEERING INTERPRETATION ===")
 
     if max_stress > mean_stress * 3:
-        output.append("Stress concentration detected")
+        result.append("Stress concentration detected")
 
     if yield_limit:
         if max_stress > yield_limit:
-            output.append("Material failure risk: yield exceeded")
-        else:
-            output.append("Within elastic range")
+            result.append("Yield limit exceeded")
 
-    return "\n".join(output)
+    return "\n".join(result)
