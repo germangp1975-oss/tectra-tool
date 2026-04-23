@@ -1,56 +1,53 @@
 import streamlit as st
 import tempfile
+import os
 from fem_toolV8 import analyze_file
 
-st.set_page_config(page_title="TECTRA™ Tool", layout="centered")
+# -----------------------------
+# CONFIG
+# -----------------------------
+st.set_page_config(page_title="TECTRA Tool", layout="centered")
 
-# -------------------------------
+# -----------------------------
 # CONTROL DE USO
-# -------------------------------
+# -----------------------------
 if "used" not in st.session_state:
     st.session_state.used = False
 
 if "unlocked" not in st.session_state:
     st.session_state.unlocked = False
 
-# -------------------------------
+# -----------------------------
 # HEADER
-# -------------------------------
+# -----------------------------
 st.title("TECTRA™ — Structural Decision Tool")
-st.markdown("Fast structural decision engine based on FEM results")
-st.markdown("Not a simulation tool. A decision tool.")
+st.markdown("Upload FEM (.vtu) files for structural diagnosis")
 
-st.markdown("---")
-
-# -------------------------------
-# BLOQUEO / ACCESO
-# -------------------------------
+# -----------------------------
+# PAYWALL SIMPLE
+# -----------------------------
 if not st.session_state.unlocked:
 
     if st.session_state.used:
-        st.error("Free trial already used")
+        st.warning("Free trial already used")
 
-        st.markdown("### 🔒 Unlock full access")
-        st.markdown(
-            "[👉 Pay here to unlock](https://www.tectra-tech.com/_paylink/AZ263VkL)"
-        )
+        st.markdown("### 🔓 Unlock full access")
+        st.markdown("[👉 Pay here to unlock](https://www.tectra-tech.com/_paylink/AZ263VkL)")
 
         code = st.text_input("Enter access code")
 
         if code == "TECTRA2026":
             st.session_state.unlocked = True
             st.success("Access granted")
+            st.rerun()
         else:
             st.stop()
 
-    else:
-        st.info("You have 1 free analysis available")
-
-# -------------------------------
-# UI
-# -------------------------------
+# -----------------------------
+# INPUTS
+# -----------------------------
 uploaded_files = st.file_uploader(
-    "Upload .vtu files",
+    "Select .vtu files",
     type=["vtu"],
     accept_multiple_files=True
 )
@@ -62,10 +59,11 @@ yield_strength = st.number_input(
 
 run = st.button("Run Analysis")
 
-# -------------------------------
+# -----------------------------
 # EJECUCIÓN
-# -------------------------------
+# -----------------------------
 if run and uploaded_files:
+
     st.session_state.used = True
 
     results = []
@@ -77,6 +75,8 @@ if run and uploaded_files:
 
         result = analyze_file(tmp_path, yield_strength)
         results.append((file.name, result))
+
+        os.remove(tmp_path)
 
     st.markdown("## Results")
 
