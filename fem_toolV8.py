@@ -2,26 +2,21 @@ import meshio
 import numpy as np
 import os
 
+
 def analyze_file(file_path, yield_strength=None):
-
-    output = []
-
-    def log(txt):
-        output.append(str(txt))
-
-    log("=== FEM TOOL V8 — Engineering Decision Engine ===")
-
     # -----------------------------
     # VALIDATION
     # -----------------------------
     if not os.path.exists(file_path):
-        return "ERROR: File not found"
+        return {"error": "File not found"}
 
-    mesh = meshio.read(file_path)
+    try:
+        mesh = meshio.read(file_path)
+    except Exception as e:
+        return {"error": f"Error reading file: {str(e)}"}
+
     points = mesh.points
     num_nodes = len(points)
-
-    log(f"Number of nodes: {num_nodes}")
 
     # -----------------------------
     # STRESS FIELD
@@ -37,9 +32,7 @@ def analyze_file(file_path, yield_strength=None):
             break
 
     if stress is None:
-        return "ERROR: Stress field not found"
-
-    log(f"Using field: {field_name}")
+        return {"error": "Stress field not found (Tresca or Mises required)"}
 
     stress = np.array(stress)
     if len(stress.shape) > 1:
@@ -56,17 +49,11 @@ def analyze_file(file_path, yield_strength=None):
     # -----------------------------
     # STATISTICS
     # -----------------------------
-    max_stress = np.max(stress)
-    mean_stress = np.mean(stress_filtered)
-    min_stress = np.min(stress)
+    max_stress = float(np.max(stress))
+    mean_stress = float(np.mean(stress_filtered))
+    min_stress = float(np.min(stress))
 
-    ratio = max_stress / mean_stress
-
-    log("\n--- STATISTICS ---")
-    log(f"Max stress: {max_stress:.3f}")
-    log(f"Mean stress: {mean_stress:.3f}")
-    log(f"Min stress: {min_stress:.3f}")
-    log(f"Max/mean ratio: {ratio:.2f}")
+    ratio = max_stress / mean_stress if mean_stress != 0 else 0
 
     # -----------------------------
     # CRITICAL POINTS
@@ -76,11 +63,7 @@ def analyze_file(file_path, yield_strength=None):
     critical_points = points[critical_indices]
 
     num_critical = len(critical_indices)
-    percentage = num_critical / num_nodes
-
-    log("\n--- CRITICAL REGIONS ---")
-    log(f"Critical points: {num_critical}")
-    log(f"Critical percentage: {percentage*100:.2f}%")
+    percentage = num_critical / num_nodes if num_nodes > 0 else 0
 
     # -----------------------------
     # LOCATION
@@ -89,8 +72,8 @@ def analyze_file(file_path, yield_strength=None):
     max_point = None
 
     if len(critical_points) > 0:
-        centroid = np.mean(critical_points, axis=0)
-        max_point = points[np.argmax(stress)]
+        centroid = np.mean(critical_points, axis=0).tolist()
+        max_point = points[np.argmax(stress)].tolist()
 
     # -----------------------------
     # SPATIAL NORMALIZATION
@@ -102,14 +85,11 @@ def analyze_file(file_path, yield_strength=None):
     # SPREAD
     # -----------------------------
     spread_norm = 0
-    if len(critical_points) > 2:
+    if len(critical_points) > 2 and size > 0:
         centroid_tmp = np.mean(critical_points, axis=0)
         distances = np.linalg.norm(critical_points - centroid_tmp, axis=1)
         spread = np.mean(distances)
-        spread_norm = spread / size if size > 0 else 0
-
-    log("\n--- DISTRIBUTION ---")
-    log(f"Normalized spread: {spread_norm:.5f}")
+        spread_norm = spread / size
 
     # -----------------------------
     # GRADIENT
@@ -124,9 +104,6 @@ def analyze_file(file_path, yield_strength=None):
 
     max_gradient = max(gradients) if gradients else 0
     gradient_norm = max_gradient / max_stress if max_stress > 0 else 0
-
-    log("\n--- GRADIENT ---")
-    log(f"Normalized gradient: {gradient_norm:.3f}")
 
     # -----------------------------
     # CLASSIFICATION
@@ -162,14 +139,19 @@ def analyze_file(file_path, yield_strength=None):
     structural_risk = "UNKNOWN"
 
     if yield_strength is not None:
-        safety_factor = yield_strength / (max_stress / 1e6)
+        try:
+            # stress assumed in Pa → convert to MPa
+            safety_factor = yield_strength / (max_stress / 1e6)
 
-        if safety_factor < 1.5:
-            structural_risk = "HIGH"
-        elif safety_factor < 3:
-            structural_risk = "MEDIUM"
-        else:
-            structural_risk = "LOW"
+            if safety_factor < 1.5:
+                structural_risk = "HIGH"
+            elif safety_factor < 3:
+                structural_risk = "MEDIUM"
+            else:
+                structural_risk = "LOW"
+        except:
+            safety_factor = None
+            structural_risk = "UNKNOWN"
 
     # -----------------------------
     # FINAL DECISION
@@ -197,37 +179,23 @@ def analyze_file(file_path, yield_strength=None):
     # -----------------------------
     # OUTPUT
     # -----------------------------
-    log("\n=== DIAGNOSIS ===")
-    log(f"Type: {structure_type}")
-
-    log("\n=== LOCATION ===")
-    if centroid is not None:
-        log(f"Critical centroid: {centroid}")
-    if max_point is not None:
-        log(f"Maximum stress point: {max_point}")
-
-    log("\n=== RISK ANALYSIS ===")
-    log(f"Geometric risk: {geometric_risk}")
-    log(f"Structural risk: {structural_risk}")
-
-    log("\n=== ENGINEERING DECISION ===")
-    log(f"Result: {decision}")
-
-    if safety_factor is not None:
-        log(f"Safety factor: {safety_factor:.2f}")
-
-    log(f"Confidence: {confidence}")
-
-    log("\n=== RECOMMENDATIONS ===")
-
-    if decision == "NOT ACCEPTABLE":
-        log("- Immediate redesign required")
-    elif decision == "REVIEW":
-        log("- Optimize geometry")
-        log("- Reduce stress concentrations")
-    else:
-        log("- Design acceptable")
-
-    log("\nAnalysis complete")
-
-    return "\n".join(output)
+    return {
+        "num_nodes": num_nodes,
+        "field_used": field_name,
+        "max_stress": max_stress,
+        "mean_stress": mean_stress,
+        "min_stress": min_stress,
+        "ratio": ratio,
+        "critical_points": num_critical,
+        "critical_percentage": percentage,
+        "centroid": centroid,
+        "max_point": max_point,
+        "spread_norm": spread_norm,
+        "gradient_norm": gradient_norm,
+        "structure_type": structure_type,
+        "geometric_risk": geometric_risk,
+        "structural_risk": structural_risk,
+        "safety_factor": safety_factor,
+        "decision": decision,
+        "confidence": confidence
+    }
