@@ -1,85 +1,46 @@
 import streamlit as st
 import tempfile
-import os
 from fem_toolV8 import analyze_file
 
-# -----------------------------
-# CONFIG
-# -----------------------------
-st.set_page_config(page_title="TECTRA Tool", layout="centered")
+st.set_page_config(page_title="TECTRA™ FEM Tool", layout="centered")
 
-# -----------------------------
-# CONTROL DE USO
-# -----------------------------
-if "used" not in st.session_state:
-    st.session_state.used = False
+st.title("TECTRA™ — FEM Decision Engine")
 
-if "unlocked" not in st.session_state:
-    st.session_state.unlocked = False
-
-# -----------------------------
-# HEADER
-# -----------------------------
-st.title("TECTRA™ — Structural Decision Tool")
-st.markdown("Upload FEM (.vtu) files for structural diagnosis")
-
-# -----------------------------
-# PAYWALL SIMPLE
-# -----------------------------
-if not st.session_state.unlocked:
-
-    if st.session_state.used:
-        st.warning("Free trial already used")
-
-        st.markdown("### 🔓 Unlock full access")
-        st.markdown("[👉 Pay here to unlock](https://www.tectra-tech.com/_paylink/AZ263VkL)")
-
-        code = st.text_input("Enter access code")
-
-        if code == "TECTRA2026":
-            st.session_state.unlocked = True
-            st.success("Access granted")
-            st.rerun()
-        else:
-            st.stop()
-
-# -----------------------------
-# INPUTS
-# -----------------------------
-uploaded_files = st.file_uploader(
-    "Select .vtu files",
-    type=["vtu"],
-    accept_multiple_files=True
-)
+uploaded_file = st.file_uploader("Upload .vtu file", type=["vtu"])
 
 yield_strength = st.number_input(
     "Yield strength (MPa) [optional]",
-    value=250
+    min_value=0.0,
+    value=250.0
 )
 
-run = st.button("Run Analysis")
+if uploaded_file is not None:
 
-# -----------------------------
-# EJECUCIÓN
-# -----------------------------
-if run and uploaded_files:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".vtu") as tmp:
+        tmp.write(uploaded_file.read())
+        file_path = tmp.name
 
-    st.session_state.used = True
+    with st.spinner("Analyzing..."):
+        result = analyze_file(file_path, yield_strength)
 
-    results = []
+    if "error" in result:
+        st.error(result["error"])
 
-    for file in uploaded_files:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(file.read())
-            tmp_path = tmp.name
+    else:
+        st.subheader("RESULT")
 
-        result = analyze_file(tmp_path, yield_strength)
-        results.append((file.name, result))
+        st.write("**Decision:**", result["decision"])
+        st.write("**Structure type:**", result["structure_type"])
+        st.write("**Geometric risk:**", result["geometric_risk"])
+        st.write("**Structural risk:**", result["structural_risk"])
+        st.write("**Confidence:**", result["confidence"])
 
-        os.remove(tmp_path)
+        st.subheader("Metrics")
 
-    st.markdown("## Results")
+        st.write("Max stress:", round(result["max_stress"], 2))
+        st.write("Mean stress:", round(result["mean_stress"], 2))
+        st.write("Ratio:", round(result["ratio"], 2))
+        st.write("Critical %:", round(result["critical_percentage"], 2))
 
-    for name, res in results:
-        st.markdown(f"### {name}")
-        st.text(res)
+        if result["safety_factor"] is not None:
+            st.write("Safety factor:", round(result["safety_factor"], 2))
