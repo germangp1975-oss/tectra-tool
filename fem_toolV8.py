@@ -1,20 +1,31 @@
 import meshio
 import numpy as np
-import io
+import tempfile
 
 def analyze_file(file, yield_limit=None):
     try:
-        file_buffer = io.BytesIO(file.read())
-        mesh = meshio.read(file_buffer, file_format="vtu")
+        # 🔴 CLAVE: usar archivo temporal real
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".vtu") as tmp:
+            tmp.write(file.getvalue())
+            tmp_path = tmp.name
+
+        mesh = meshio.read(tmp_path)
+
     except Exception as e:
         return f"File reading error: {str(e)}"
 
     output = []
     output.append("=== TECTRA FEM TOOL V8 — Structural Decision Engine ===\n")
 
+    # -----------------------------
+    # NODES
+    # -----------------------------
     points = mesh.points
     output.append(f"Number of nodes: {len(points)}")
 
+    # -----------------------------
+    # DATA FIELDS
+    # -----------------------------
     if not mesh.point_data:
         output.append("\n⚠️ No nodal data fields available")
         return "\n".join(output)
@@ -23,6 +34,9 @@ def analyze_file(file, yield_limit=None):
     for key in mesh.point_data.keys():
         output.append(f" - {key}")
 
+    # -----------------------------
+    # STRESS DETECTION
+    # -----------------------------
     stress = None
     stress_key = None
 
@@ -44,6 +58,9 @@ def analyze_file(file, yield_limit=None):
     if len(stress.shape) > 1:
         stress = np.linalg.norm(stress, axis=1)
 
+    # -----------------------------
+    # METRICS
+    # -----------------------------
     max_stress = np.max(stress)
     mean_stress = np.mean(stress)
     min_stress = np.min(stress)
@@ -52,13 +69,19 @@ def analyze_file(file, yield_limit=None):
     output.append(f"Mean stress: {round(mean_stress, 2)} MPa")
     output.append(f"Minimum stress: {round(min_stress, 2)} MPa")
 
+    # -----------------------------
+    # CRITICAL ZONES
+    # -----------------------------
     threshold = np.percentile(stress, 95)
-    critical_mask = stress >= threshold
-    num_critical = np.sum(critical_mask)
+    num_critical = int(np.sum(stress >= threshold))
 
-    output.append(f"\nCritical points (top 5% stress): {int(num_critical)}")
+    output.append(f"\nCritical points (top 5% stress): {num_critical}")
 
+    # -----------------------------
+    # GRADIENT
+    # -----------------------------
     gradients = []
+
     for i in range(len(points) - 1):
         dist = np.linalg.norm(points[i] - points[i+1])
         if dist > 0:
@@ -67,6 +90,9 @@ def analyze_file(file, yield_limit=None):
     max_gradient = max(gradients) if gradients else 0
     output.append(f"Maximum stress gradient: {round(max_gradient, 2)}")
 
+    # -----------------------------
+    # ENGINEERING ASSESSMENT
+    # -----------------------------
     output.append("\n=== ENGINEERING ASSESSMENT ===")
 
     if max_stress > mean_stress * 3:
