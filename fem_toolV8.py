@@ -1,10 +1,11 @@
 import meshio
 import numpy as np
+import io
 
 def analyze_file(file, yield_limit=None):
     try:
-        # 🔴 CLAVE: especificar formato VTU
-        mesh = meshio.read(file, file_format="vtu")
+        file_buffer = io.BytesIO(file.read())
+        mesh = meshio.read(file_buffer, file_format="vtu")
     except Exception as e:
         return f"File reading error: {str(e)}"
 
