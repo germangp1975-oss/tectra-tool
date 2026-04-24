@@ -2,8 +2,18 @@ import streamlit as st
 import tempfile
 from fem_toolV9 import analyze_file
 
+# SIEMPRE LO PRIMERO EN STREAMLIT
 st.set_page_config(page_title="TECTRA Structural Insight Engine", layout="centered")
 
+# --- PASSWORD PROTECTION ---
+PASSWORD = "TECTRA72"
+
+pwd = st.text_input("Enter password", type="password")
+
+if pwd != PASSWORD:
+    st.stop()
+
+# --- UI ---
 st.title("TECTRA™ — Structural Insight Engine")
 st.markdown("Automated structural assessment for FEM results")
 
@@ -14,9 +24,11 @@ st.info(
     "This tool provides decision-support insights, not certified validation."
 )
 
+# --- INPUTS ---
 files = st.file_uploader("Upload FEM files (.vtu)", type=["vtu"], accept_multiple_files=True)
 yield_limit = st.number_input("Yield strength (MPa)", value=250.0)
 
+# --- PROCESS ---
 if files:
 
     st.success(f"{len(files)} file(s) loaded")
@@ -39,6 +51,7 @@ if files:
 
             results.append((file.name, res))
 
+        # --- RESULTS ---
         st.subheader("Structural Assessment")
 
         for name, r in results:
@@ -68,6 +81,7 @@ if files:
             for a in r["actions"]:
                 st.write("-", a)
 
+        # --- COMPARISON ---
         if len(results) > 1:
 
             st.subheader("Comparative Analysis")
@@ -81,9 +95,6 @@ if files:
             best_score = best[1]["score"]
             worst_score = worst[1]["score"]
 
-            improvement = ((best_score - worst_score) / (worst_score + 1e-9)) * 100
-
-            st.success(f"Best design: {best[0]}")
-            st.error(f"Weakest design: {worst[0]}")
-
-            st.markdown(f"**Performance improvement (best vs worst): +{improvement:.1f}%**")
+            st.write("---")
+            st.success(f"Best design: {best[0]} (Score: {best_score:.1f})")
+            st.error(f"Worst design: {worst[0]} (Score: {worst_score:.1f})")
