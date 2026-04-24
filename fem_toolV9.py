@@ -16,34 +16,43 @@ def analyze_file(file_path, yield_limit=None):
 
     available_fields = list(mesh.point_data.keys())
 
-    # DETECT STRESS FIELD
+    # =========================
+    # DETECTAR VON MISES (OBLIGATORIO)
+    # =========================
     stress_field = None
+
     for key in available_fields:
         if "mises" in key.lower():
             stress_field = key
             break
 
     if stress_field is None:
-        for key in available_fields:
-            if "stress" in key.lower():
-                stress_field = key
-                break
-
-    if stress_field is None:
-        return {"error": "No stress field detected"}
+        return {"error": "No von Mises stress field detected (required)"}
 
     stress = mesh.point_data[stress_field]
 
+    # Asegurar escalar
     if stress.ndim > 1:
-        stress = np.linalg.norm(stress, axis=1)
+        stress = stress[:, 0]
 
-    # UNIDADES → MPa
-    stress = stress / 1e6
+    stress = np.array(stress, dtype=float)
 
-    # METRICS
+    # =========================
+    # DETECCIÓN AUTOMÁTICA UNIDADES
+    # =========================
+    max_raw = np.max(stress)
+
+    # Si es muy grande → está en Pa → convertir a MPa
+    if max_raw > 1e5:
+        stress = stress / 1e6
+
+    # =========================
+    # MÉTRICAS PRINCIPALES
+    # =========================
     max_stress = float(np.max(stress))
     mean_stress = float(np.mean(stress) + 1e-9)
 
+    # Zona crítica (95%)
     threshold = np.percentile(stress, 95)
     critical_mask = stress >= threshold
     critical_points_count = int(np.sum(critical_mask))
@@ -51,16 +60,18 @@ def analyze_file(file_path, yield_limit=None):
     max_index = int(np.argmax(stress))
     critical_point = points[max_index]
 
-    # GRADIENT
-    gradients = []
-    for i in range(len(points) - 1):
-        dist = np.linalg.norm(points[i] - points[i+1])
-        if dist > 0:
-            gradients.append(abs(stress[i] - stress[i+1]) / dist)
+    # =========================
+    # MÉTRICAS ROBUSTAS (SIN GRADIENTE FALSO)
+    # =========================
+    p95 = np.percentile(stress, 95)
+    p50 = np.percentile(stress, 50)
 
-    max_gradient = max(gradients) if gradients else 0
+    stress_ratio = max_stress / (p50 + 1e-9)
+    concentration_ratio = p95 / (p50 + 1e-9)
 
+    # =========================
     # FACTOR DE SEGURIDAD
+    # =========================
     if yield_limit:
         FoS = yield_limit / (max_stress + 1e-9)
     else:
@@ -78,23 +89,23 @@ def analyze_file(file_path, yield_limit=None):
     else:
         fos_level = "UNKNOWN"
 
-    # MÉTRICAS AVANZADAS
-    stress_ratio = max_stress / mean_stress
-    gradient_ratio = max_gradient / (max_stress + 1e-9)
-
-    # SCORE ESTRUCTURAL
+    # =========================
+    # SCORE
+    # =========================
     if FoS is not None:
         material_score = min(100, FoS * 40)
     else:
         material_score = 50
 
-    penalty_stress = max(0, min(40, (stress_ratio - 1) * 20))
-    penalty_gradient = max(0, min(30, gradient_ratio * 50))
+    penalty_stress = max(0, min(40, (stress_ratio - 1) * 15))
+    penalty_concentration = max(0, min(30, (concentration_ratio - 1) * 20))
 
-    structural_score = material_score - penalty_stress - penalty_gradient
+    structural_score = material_score - penalty_stress - penalty_concentration
     score = max(0, min(100, structural_score))
 
+    # =========================
     # FATIGA SIMPLIFICADA
+    # =========================
     if yield_limit:
         fatigue_ratio = max_stress / yield_limit
     else:
@@ -109,7 +120,9 @@ def analyze_file(file_path, yield_limit=None):
     else:
         fatigue_level = "LOW"
 
-    # FAILURE MODE AVANZADO
+    # =========================
+    # FAILURE MODE
+    # =========================
     if FoS is not None and FoS < 1:
         failure_mode = "STATIC FAILURE (yielding)"
     elif stress_ratio > 3:
@@ -119,23 +132,27 @@ def analyze_file(file_path, yield_limit=None):
     else:
         failure_mode = "ELASTIC BEHAVIOR"
 
-    # DETECCIÓN GEOMÉTRICA
-    if max_gradient > (max_stress * 0.3):
+    # =========================
+    # GEOMETRÍA
+    # =========================
+    if concentration_ratio > 2:
         geom_flag = "Stress concentration consistent with geometric discontinuity"
     else:
         geom_flag = "No dominant geometric stress concentration"
 
-    # COMPORTAMIENTO ESTRUCTURAL
+    # =========================
+    # COMPORTAMIENTO
+    # =========================
     if stress_ratio > 3:
         structural_mode = "SEVERE STRESS CONCENTRATION"
     elif stress_ratio > 2:
         structural_mode = "MODERATE STRESS AMPLIFICATION"
-    elif gradient_ratio > 0.2:
-        structural_mode = "GEOMETRIC DISCONTINUITY EFFECT"
     else:
         structural_mode = "UNIFORM STRESS DISTRIBUTION"
 
-    # RIESGO GLOBAL
+    # =========================
+    # RIESGO
+    # =========================
     if score > 85:
         risk = "LOW"
     elif score > 60:
@@ -145,9 +162,9 @@ def analyze_file(file_path, yield_limit=None):
     else:
         risk = "CRITICAL"
 
-    # -------------------------
-    # DECISION LAYER
-    # -------------------------
+    # =========================
+    # DECISION
+    # =========================
     if score >= 85:
         decision = "ACCEPT"
     elif score >= 60:
@@ -157,7 +174,9 @@ def analyze_file(file_path, yield_limit=None):
     else:
         decision = "REJECT"
 
+    # =========================
     # PROBLEMA PRINCIPAL
+    # =========================
     if failure_mode == "GEOMETRIC FAILURE DRIVER":
         primary_issue = "Geometric stress concentration"
     elif failure_mode == "FATIGUE-DRIVEN RISK":
@@ -167,7 +186,9 @@ def analyze_file(file_path, yield_limit=None):
     else:
         primary_issue = "No critical issue"
 
-    # MENSAJE FINAL
+    # =========================
+    # CONCLUSIÓN
+    # =========================
     if decision == "ACCEPT":
         conclusion = "Design is structurally efficient and suitable for use"
     elif decision == "ACCEPT WITH CAUTION":
@@ -177,7 +198,9 @@ def analyze_file(file_path, yield_limit=None):
     else:
         conclusion = f"Design not recommended due to {primary_issue.lower()}"
 
+    # =========================
     # ACCIONES
+    # =========================
     actions = []
 
     if geom_flag != "No dominant geometric stress concentration":
@@ -197,7 +220,6 @@ def analyze_file(file_path, yield_limit=None):
         "max_stress": max_stress,
         "mean_stress": mean_stress,
         "critical_points": critical_points_count,
-        "max_gradient": max_gradient,
         "location": critical_point,
         "FoS": FoS,
         "fos_level": fos_level,
