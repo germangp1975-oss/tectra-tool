@@ -1,8 +1,79 @@
 import meshio
 import numpy as np
 
+
+# =========================
+# VON MISES
+# =========================
+def compute_von_mises(stress_tensor):
+    sxx = stress_tensor[:, 0]
+    syy = stress_tensor[:, 1]
+    szz = stress_tensor[:, 2]
+    sxy = stress_tensor[:, 3]
+    sxz = stress_tensor[:, 4]
+    syz = stress_tensor[:, 5]
+
+    vm = np.sqrt(
+        0.5 * (
+            (sxx - syy)**2 +
+            (syy - szz)**2 +
+            (szz - sxx)**2 +
+            6 * (sxy**2 + sxz**2 + syz**2)
+        )
+    )
+    return vm
+
+
+# =========================
+# CLUSTERS CRÍTICOS
+# =========================
+def compute_clusters(points, stress, threshold_percent=95, distance_factor=0.02):
+
+    threshold = np.percentile(stress, threshold_percent)
+    critical_indices = np.where(stress >= threshold)[0]
+
+    if len(critical_indices) == 0:
+        return []
+
+    bbox_size = np.max(points, axis=0) - np.min(points, axis=0)
+    base_dist = np.linalg.norm(bbox_size) * distance_factor
+
+    clusters = []
+    visited = set()
+
+    for idx in critical_indices:
+        if idx in visited:
+            continue
+
+        cluster = [idx]
+        visited.add(idx)
+        stack = [idx]
+
+        while stack:
+            current = stack.pop()
+            current_point = points[current]
+
+            for other_idx in critical_indices:
+                if other_idx in visited:
+                    continue
+
+                dist = np.linalg.norm(points[other_idx] - current_point)
+
+                if dist < base_dist:
+                    cluster.append(other_idx)
+                    visited.add(other_idx)
+                    stack.append(other_idx)
+
+        clusters.append(cluster)
+
+    return clusters
+
+
 def analyze_file(file_path, yield_limit=None):
 
+    # =========================
+    # CARGA
+    # =========================
     try:
         mesh = meshio.read(file_path)
     except Exception as e:
@@ -17,42 +88,67 @@ def analyze_file(file_path, yield_limit=None):
     available_fields = list(mesh.point_data.keys())
 
     # =========================
-    # DETECTAR VON MISES (OBLIGATORIO)
+    # DETECTAR TENSIONES
     # =========================
-    stress_field = None
+    stress = None
 
+    # Buscar von Mises directo
     for key in available_fields:
         if "mises" in key.lower():
-            stress_field = key
+            stress = mesh.point_data[key]
             break
 
-    if stress_field is None:
-        return {"error": "No von Mises stress field detected (required)"}
+    # Si no existe → calcular desde tensor
+    if stress is None:
+        for key in available_fields:
+            data = mesh.point_data[key]
+            if isinstance(data, np.ndarray):
+                if data.ndim == 2 and data.shape[1] >= 6:
+                    try:
+                        stress = compute_von_mises(data)
+                        break
+                    except:
+                        continue
 
-    stress = mesh.point_data[stress_field]
+    if stress is None:
+        return {"error": "No valid stress data found"}
 
-    # Asegurar escalar
-    if stress.ndim > 1:
+    if isinstance(stress, np.ndarray) and stress.ndim > 1:
         stress = stress[:, 0]
 
     stress = np.array(stress, dtype=float)
 
     # =========================
-    # DETECCIÓN AUTOMÁTICA UNIDADES
+    # DESPLAZAMIENTOS
     # =========================
-    max_raw = np.max(stress)
+    displacement = None
 
-    # Si es muy grande → está en Pa → convertir a MPa
-    if max_raw > 1e5:
+    for key in available_fields:
+        if "disp" in key.lower():
+            data = mesh.point_data[key]
+            if isinstance(data, np.ndarray):
+                if data.ndim == 2 and data.shape[1] >= 3:
+                    displacement = np.linalg.norm(data[:, :3], axis=1)
+                    break
+
+    if displacement is None:
+        displacement = np.zeros_like(stress)
+
+    # =========================
+    # NORMALIZAR UNIDADES
+    # =========================
+    if np.max(stress) > 1e5:
         stress = stress / 1e6
 
     # =========================
-    # MÉTRICAS PRINCIPALES
+    # MÉTRICAS
     # =========================
     max_stress = float(np.max(stress))
     mean_stress = float(np.mean(stress) + 1e-9)
 
-    # Zona crítica (95%)
+    max_disp = float(np.max(displacement))
+    mean_disp = float(np.mean(displacement) + 1e-9)
+
     threshold = np.percentile(stress, 95)
     critical_mask = stress >= threshold
     critical_points_count = int(np.sum(critical_mask))
@@ -60,14 +156,22 @@ def analyze_file(file_path, yield_limit=None):
     max_index = int(np.argmax(stress))
     critical_point = points[max_index]
 
-    # =========================
-    # MÉTRICAS ROBUSTAS (SIN GRADIENTE FALSO)
-    # =========================
     p95 = np.percentile(stress, 95)
     p50 = np.percentile(stress, 50)
 
     stress_ratio = max_stress / (p50 + 1e-9)
     concentration_ratio = p95 / (p50 + 1e-9)
+
+    disp_ratio = max_disp / (mean_disp + 1e-9)
+
+    # =========================
+    # CLUSTERS
+    # =========================
+    clusters = compute_clusters(points, stress)
+    num_clusters = len(clusters)
+    largest_cluster_size = max([len(c) for c in clusters]) if clusters else 0
+
+    cluster_ratio = largest_cluster_size / n_nodes if n_nodes > 0 else 0
 
     # =========================
     # FACTOR DE SEGURIDAD
@@ -99,12 +203,14 @@ def analyze_file(file_path, yield_limit=None):
 
     penalty_stress = max(0, min(40, (stress_ratio - 1) * 15))
     penalty_concentration = max(0, min(30, (concentration_ratio - 1) * 20))
+    penalty_disp = max(0, min(20, (disp_ratio - 1) * 10))
+    penalty_cluster = max(0, min(20, cluster_ratio * 100))
 
-    structural_score = material_score - penalty_stress - penalty_concentration
+    structural_score = material_score - penalty_stress - penalty_concentration - penalty_disp - penalty_cluster
     score = max(0, min(100, structural_score))
 
     # =========================
-    # FATIGA SIMPLIFICADA
+    # FATIGA
     # =========================
     if yield_limit:
         fatigue_ratio = max_stress / yield_limit
@@ -125,6 +231,10 @@ def analyze_file(file_path, yield_limit=None):
     # =========================
     if FoS is not None and FoS < 1:
         failure_mode = "STATIC FAILURE (yielding)"
+    elif cluster_ratio > 0.05:
+        failure_mode = "EXTENDED CRITICAL REGION"
+    elif disp_ratio > 3:
+        failure_mode = "GLOBAL DEFORMATION ISSUE"
     elif stress_ratio > 3:
         failure_mode = "GEOMETRIC FAILURE DRIVER"
     elif fatigue_ratio > 0.6:
@@ -143,7 +253,9 @@ def analyze_file(file_path, yield_limit=None):
     # =========================
     # COMPORTAMIENTO
     # =========================
-    if stress_ratio > 3:
+    if disp_ratio > 3:
+        structural_mode = "GLOBAL FLEXIBILITY"
+    elif stress_ratio > 3:
         structural_mode = "SEVERE STRESS CONCENTRATION"
     elif stress_ratio > 2:
         structural_mode = "MODERATE STRESS AMPLIFICATION"
@@ -163,7 +275,7 @@ def analyze_file(file_path, yield_limit=None):
         risk = "CRITICAL"
 
     # =========================
-    # DECISION
+    # DECISIÓN
     # =========================
     if score >= 85:
         decision = "ACCEPT"
@@ -177,7 +289,11 @@ def analyze_file(file_path, yield_limit=None):
     # =========================
     # PROBLEMA PRINCIPAL
     # =========================
-    if failure_mode == "GEOMETRIC FAILURE DRIVER":
+    if failure_mode == "EXTENDED CRITICAL REGION":
+        primary_issue = "Large critical stress region"
+    elif failure_mode == "GLOBAL DEFORMATION ISSUE":
+        primary_issue = "Excessive deformation"
+    elif failure_mode == "GEOMETRIC FAILURE DRIVER":
         primary_issue = "Geometric stress concentration"
     elif failure_mode == "FATIGUE-DRIVEN RISK":
         primary_issue = "Fatigue risk"
@@ -203,8 +319,14 @@ def analyze_file(file_path, yield_limit=None):
     # =========================
     actions = []
 
+    if cluster_ratio > 0.05:
+        actions.append("Redesign to reduce extended stress concentration region")
+
     if geom_flag != "No dominant geometric stress concentration":
         actions.append("Smooth geometry transitions / increase fillet radius")
+
+    if disp_ratio > 3:
+        actions.append("Increase stiffness / reduce deformation")
 
     if FoS is not None and FoS < 1:
         actions.append("Increase section thickness or material strength")
@@ -221,6 +343,10 @@ def analyze_file(file_path, yield_limit=None):
         "mean_stress": mean_stress,
         "critical_points": critical_points_count,
         "location": critical_point,
+        "max_displacement": max_disp,
+        "num_critical_clusters": num_clusters,
+        "largest_cluster_size": largest_cluster_size,
+        "cluster_ratio": cluster_ratio,
         "FoS": FoS,
         "fos_level": fos_level,
         "score": score,
